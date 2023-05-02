@@ -8,10 +8,11 @@ from dataclasses import dataclass
 from typing import Tuple
 from time import time
 import pickle
+from tqdm import tqdm
 
-SEED = 42
+SEED = 5
 NUM_PROCESSES = multiprocessing.cpu_count()
-NUM__TRANSITION_SAMPLES = 1000
+NUM_TRANSITION_SAMPLES = 200
 NUM_ACTIONS = 8
 
 np.random.seed(SEED)
@@ -36,7 +37,6 @@ def gen_random_actions(env: BaseBlackOilEnv, count_actions):
 
 
 def sim_tick(actions):
-    print(f"start sim: {actions}")
     env = BlackOilEnv()
     env.reset()
     transitions = []
@@ -57,7 +57,7 @@ def sim_tick(actions):
 def main():
     all_results = []
 
-    for step_num in range(NUM__TRANSITION_SAMPLES // (NUM_ACTIONS * NUM_PROCESSES)):
+    for step_num in tqdm(range(NUM_TRANSITION_SAMPLES // (NUM_ACTIONS * NUM_PROCESSES))):
         actions = [gen_random_actions(BlackOilEnv(), NUM_PROCESSES)
                    for _ in range(NUM_PROCESSES)]
 
