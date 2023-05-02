@@ -66,7 +66,7 @@ def main():
         with multiprocessing.Pool(NUM_PROCESSES) as p:
             transitions = p.map(sim_tick, actions)
 
-        all_results.append(transitions)
+        all_results.extend(transitions)
 
         if step_num % 10 == 0:
             with open("saved_results.pkl", "wb") as f:
