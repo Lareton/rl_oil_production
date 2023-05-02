@@ -66,9 +66,8 @@ def main():
 
         all_results.extend(transitions)
 
-        if step_num % 10 == 0:
-            with open("saved_results.pkl", "wb") as f:
-                pickle.dump(all_results, f)
+        with open("saved_results.pkl", "wb") as f:
+            pickle.dump(all_results, f)
 
 
 if __name__ == "__main__":
