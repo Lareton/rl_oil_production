@@ -10,7 +10,7 @@ from time import time
 import pickle
 
 SEED = 42
-NUM_PROCESSES = 16
+NUM_PROCESSES = multiprocessing.cpu_count()
 NUM__TRANSITION_SAMPLES = 1000
 NUM_ACTIONS = 8
 
@@ -43,7 +43,6 @@ def sim_tick(actions):
 
     ts = time()
     for action_num in range(NUM_ACTIONS):
-        print(action_num)
         action = actions[action_num]
 
         state = env.observation
@@ -52,7 +51,6 @@ def sim_tick(actions):
         transitions.append(transition)
     te = time()
 
-    print("spent time: ", te - ts)
     return transitions
 
 
