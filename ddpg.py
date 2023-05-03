@@ -127,19 +127,44 @@ class Critic(nn.Module):
 class Actor(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, learning_rate=3e-4):
         super(Actor, self).__init__()
-        self.linear1 = nn.Linear(input_size, hidden_size)
+        # TODO : Нормально сворачивать - какие параметры и куда ставить
+        self.layer1 = nn.Sequential(
+            nn.Conv3d(1, 16, (2, 2, 2)),
+            nn.MaxPool2d(kernel_size=(2, 2)),
+            nn.ReLU(),
+        # )
+        # self.layer2 = nn.Sequential(
+        #     nn.Conv3d(16, 32, (3, 3, 3)),
+        #     nn.MaxPool2d(kernel_size=(2, 2)),
+        #     nn.ReLU(),
+        # )
+        # self.layer3 = nn.Sequential(
+        #     nn.Conv3d(32, 64, (4, 4, 4)),
+        #     nn.MaxPool2d(kernel_size=(2, 2)),
+        #     nn.ReLU(),
+
+            # TODO : подобрать параметры для Flatten
+            nn.Flatten(0),
+            nn.Sigmoid()
+        )
+        # TODO : Каковы параметры слоев
+        self.linear1 = nn.Linear(1728, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, output_size)
-        print("AAA", input_size, output_size)
 
     def forward(self, state):
         """
         Param state is a torch tensor
         """
-        x = F.relu(self.linear1(state))
+        x = self.layer1(state)
+        print(x.size())
+        # x = self.layer2(x)
+        # print(x.size())
+        # x = self.layer3(x)
+
+        x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
         x = torch.tanh(self.linear3(x))
-        print("XXX777", x.size())
 
         return x
 
@@ -148,10 +173,7 @@ class DDPGagent:
     def __init__(self, env, hidden_size=256, actor_learning_rate=1e-4, critic_learning_rate=1e-3, gamma=0.99, tau=1e-2,
                  max_memory_size=50000):
         # Params
-        if OBS_SHAPE is not None:
-            self.num_states = OBS_SHAPE
-        else:
-            self.num_states = env.observation_space.shape[0]
+        self.num_states = env.observation_space.shape[0]
         self.num_actions = env.action_space.shape[0]
         # print(env.observation_space.shape[0], env.action_space.shape[0])
         self.gamma = gamma
@@ -179,7 +201,8 @@ class DDPGagent:
         state = Variable(torch.from_numpy(state).float().unsqueeze(0))
         # print(state)
         action = self.actor.forward(state)
-        action = action.detach().numpy()[0, 0]
+        # action = np.array(action[0], action[1])
+        action = action.detach().numpy()[0]
         return action
 
     def update(self, batch_size):
@@ -219,23 +242,16 @@ class DDPGagent:
 class Environment(BlackOilEnv):
     def __init__(self, w=80, h=40, wells=8, days=30):
         super().__init__(w=w, h=h, wells=wells, days=days)
-        # TODO: поменять кол-во параметров на 2, то есть X и Y
         self.action_space = Box(low=np.array([0.0, 0.0]), high=np.array([self.w, self.h]), dtype=np.float32)
-        # TODO: поменять кол-во параметров на 8, как в state : границы не важны
-        # self.observation_space = Box(low=np.array([0, 0, 0, 0, 0, 0, 0, 0]), high=np.array([0, 0, 0, 0, 0, 0, 0, 0]), dtype=np.float32)
         self.observation_space = Box(low=0.0, high=0.0, shape=(self.h, self.w, 8), dtype=np.float32)
 
 
-OBS_SHAPE = 800
+def get_norm_coord(action):
+    return list(map(lambda x: 0 if x == 0 else round(np.log((1 / (x + 1e-8)) - 1)), action))
 
 
 def main():
-    env = NormalizedEnv(gym.make("Pendulum-v1"))
-    # print(env.action_space)
-
-    # env = gym.make("Pendulum-v1")
-
-    env = Environment(w=10, h=10, wells=4, days=1)
+    env = Environment(w=10, h=10, wells=4, days=5)
 
     agent = DDPGagent(env)
     noise = OUNoise(env.action_space)
@@ -244,7 +260,7 @@ def main():
     avg_rewards = []
     print(agent)
 
-    for episode in range(15):
+    for episode in range(50):
         state = env.reset()
         noise.reset()
         episode_reward = 0
@@ -253,8 +269,10 @@ def main():
         for step in range(4):
             action = agent.get_action(state)
             action = noise.get_action(action, step)
-            print(action.shape)
-            print(state.shape)
+            # print(action)
+            action = get_norm_coord(action)
+            print(action)
+            # print(state.shape)
             new_state, reward, done = env.step(action)
             agent.memory.push(state, action, reward, new_state, done)
 
@@ -269,9 +287,10 @@ def main():
                     "episode: {}, reward: {}, average _reward: {} \n".format(episode,
                                                                              np.round(episode_reward, decimals=2),
                                                                              np.mean(rewards[-10:])))
+                # env.render()
                 break
 
-        # assert done is True
+        assert done is True
 
         rewards.append(episode_reward)
         avg_rewards.append(np.mean(rewards[-10:]))
