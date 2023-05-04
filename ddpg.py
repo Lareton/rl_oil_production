@@ -16,6 +16,22 @@ import sys
 from time import perf_counter
 import matplotlib.pyplot as plt
 
+import pickle
+from sim_data_generation import StateActionTransition
+
+
+def get_experience_data(file_name: str):
+    with open(file_name, 'rb') as file:
+        data = pickle.load(file)
+
+    data_flatted = []
+    for i in data:
+        for j in i:
+            j: StateActionTransition
+            data_flatted.append((j.state, j.action, make_reward_number(j.reward), j.new_state))
+
+    return data_flatted
+
 
 class OUNoise(object):
     def __init__(self, action_space, mu=0.0, theta=0.15, max_sigma=0.3, min_sigma=0.3, decay_period=100000):
@@ -104,7 +120,7 @@ class Critic(nn.Module):
 
             nn.Flatten(1)
         )
-        self.linear1 = nn.Linear(hidden_size + 2, hidden_size)
+        self.linear1 = nn.Linear(3202, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, output_size)
 
@@ -164,7 +180,10 @@ class Actor(nn.Module):
         # print("BBB")
         state = torch.permute(state, (0, 3, 1, 2))
         x = self.layer1(state)
-        # print(x.size())
+        # print(x.size())def make_reward_number(reward) -> float:
+        #     if not isinstance(reward, float | np.float_):
+        #         return reward[0]
+        #     return reward
         x = self.layer2(x)
         # print(x.size())
         x = self.layer3(x)
@@ -260,12 +279,12 @@ class Environment(BlackOilEnv):
         self.observation_space = Box(low=0.0, high=0.0, shape=(self.h, self.w, 8), dtype=np.float32)
 
 
-def get_norm_coord(action):
+def get_norm_coord(action) -> tuple:
     action[0] *= (W - 1)
     action[1] *= (H - 1)
     if not (0 <= action[0] < W or 0 <= action[1] < H):
         raise ValueError("NaN here")
-    return list(map(round, action))
+    return tuple(map(round, action))
 
 
 def make_reward_number(reward) -> float:
@@ -274,55 +293,92 @@ def make_reward_number(reward) -> float:
     return reward
 
 
-H = 40
-W = 80
-WELLS = 8
-DAYS = 30
-MAX_EPISODES = 500
-BATCH_SIZE = 128
+H = 40  # 40
+W = 80  # 80
+WELLS = 8  # 8
+DAYS = 30  # 30
+MAX_EPISODES = 500  # 500
+BATCH_SIZE = 128  # 128
+MEMORY_SIZE = 50_000  # 50_000
+NOISE_RANGE = 20  # 20
+DATA = ['saved_results1.pkl', 'saved_results2.pkl', 'saved_results3.pkl', 'saved_results5.pkl']
+
+
+"""
+    Как запускать тестирование:
+        1) Проверить соответствие WELLS к (W, H)
+        2) Осознать правильность DAYS
+        3) Осознать правильность MAX_EPISODES
+        4) Вспомнить про BATCH_SIZE и NOISE_RANGE
+        5) Надеяться на лучшее и запустить
+    
+    Как тестить:
+        1) Загружаем модель
+        2) Загружаем карту
+        3) Чисто тестим: без шума и обучения
+"""
 
 
 def main():
     env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
 
-    agent = DDPGagent(env)
-    noise = OUNoise(env.action_space)
+    agent = DDPGagent(env, max_memory_size=MEMORY_SIZE)
+
     rewards = []
     avg_rewards = []
-    amount_wells = []
+    number_wells = {i + 1: 0 for i in range(WELLS)}
+    step_time = []
+    update_time = []
+    episode_time = []
+
+    # Считаем максимальную нагруду по рандомным данным - равна 2.7
+    # tt = get_experience_data(DATA[0])[1]
+    # tt = max(tt, get_experience_data(DATA[1])[1])
+    # tt = max(tt, get_experience_data(DATA[2])[1])
+    # tt = max(tt, get_experience_data(DATA[3])[1])
+    # print(tt)
+
+    for file_name in DATA:
+        temp = get_experience_data(file_name)
+        for sample in temp:
+            agent.memory.push(*sample)
+    print("DATA LOADED")
 
     for episode in range(MAX_EPISODES):
         state = env.reset()
-        noise.reset()
         episode_reward = 0
+        time_step, time_update = [], []
         time_begin = perf_counter()
 
         for step in range(WELLS):
-            time_action = perf_counter()
             action = agent.get_action(state)
-            time_actor = perf_counter() - time_action
-            # TODO : рандомный шум или шум Ornstein-Uhlenbeck Process ?
-            action = noise.get_action(action, step)
-            # action = np.clip(action + np.array([torch.randn(), torch.randn()], dtype=np.float32), 0, 1)
-            # print(action, end=' : ')
+
+            # TODO : рандомный шум - насколько большой ?
+            action = np.clip(np.tanh(torch.randn(2)) / NOISE_RANGE + torch.tensor(action), 0, 1).tolist()
             action = get_norm_coord(action)
-            # print(state.shape)
-            time_action = perf_counter()
+
+            time_per_step = perf_counter()
             new_state, reward, _ = env.step(action)
-            print(action, ':', perf_counter() - time_action, time_actor, end=' : ')
+            time_per_step = perf_counter() - time_per_step
+
             reward = make_reward_number(reward)
             agent.memory.push(state, action, reward, new_state)
 
-            time_action = perf_counter()
+            time_per_update = perf_counter()
             if len(agent.memory) > BATCH_SIZE:
                 agent.update(BATCH_SIZE)
-            print(perf_counter() - time_action)
+            time_per_update = perf_counter() - time_per_update
+
+            print(f"{step + 1}: action: {action}, TIME per step: {time_per_step}, TIME per update: {time_per_update}")
 
             state = new_state
             episode_reward += reward
 
+            time_update.append(time_per_update)
+            time_step.append(time_per_step)
+
+        time_begin = perf_counter() - time_begin
         # env.render()
-        time_end = perf_counter() - time_begin
 
         rewards.append(episode_reward)
         avg_rewards.append(np.mean(rewards[-10:]))
@@ -331,14 +387,18 @@ def main():
             for y in range(W):
                 if state[x][y][-1]:
                     wells_built += 1
-        amount_wells.append(wells_built)
+        number_wells[wells_built] += 1
+        step_time.append(np.mean(time_step))
+        update_time.append(np.mean(time_update))
+        episode_time.append(time_begin)
+
         sys.stdout.write(
             "episode: {}, reward: {}, average _reward: {}, wells_number: {}, time: {}\n".format(episode,
                                                                                                 np.round(episode_reward,
                                                                                                          decimals=2),
                                                                                                 np.mean(rewards[-10:]),
                                                                                                 wells_built,
-                                                                                                time_end))
+                                                                                                time_begin))
 
     plt.plot(rewards)
     plt.plot(avg_rewards)
@@ -348,11 +408,23 @@ def main():
     plt.show()
     plt.close()
 
-    plt.plot(amount_wells)
+    # /// diagram
+    plt.bar(number_wells.keys(), number_wells.values())
+    plt.plot()
+    plt.xlabel('Wells')
+    plt.ylabel('Episode')
+    plt.show()
+    plt.close()
+
+    plt.plot(episode_time, label='episode')
+    plt.plot(step_time, label='step')
+    plt.plot(update_time, label='update')
     plt.plot()
     plt.xlabel('Episode')
-    plt.ylabel('Wells')
+    plt.ylabel('Time')
+    plt.legend()
     plt.show()
+    plt.close()
 
 
 if __name__ == '__main__':
