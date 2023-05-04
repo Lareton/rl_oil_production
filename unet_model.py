@@ -93,3 +93,19 @@ class UNet2(nn.Module):
 
         res = self.last_block(results_deconv[-1])
         return res
+
+    def get_all_weights(self):
+        return [*self.conv_down_layers, *self.dec_conv_layers,
+                       *self.pool_layers, *self.upsample_layers]
+
+    def to_cuda(self):
+        self.cuda()
+
+        for tensor in self.get_all_weights():
+            tensor = tensor.to("cuda")
+
+    def to_cpu(self):
+        self.cpu()
+
+        for tensor in self.get_all_weights():
+            tensor = tensor.to("cpu")
