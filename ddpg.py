@@ -1,5 +1,4 @@
 import numpy as np
-import gym
 from gym.spaces import Box
 from collections import deque
 import random
@@ -14,7 +13,7 @@ from torch.autograd import Variable
 from src.envs.envs import BlackOilEnv
 
 import sys
-import pandas as pd
+from time import perf_counter
 import matplotlib.pyplot as plt
 
 
@@ -26,9 +25,9 @@ class OUNoise(object):
         self.max_sigma = max_sigma
         self.min_sigma = min_sigma
         self.decay_period = decay_period
-        self.action_dim = action_space.shape[0]
-        self.low = action_space.low
-        self.high = action_space.high
+        self.action_dim = 2
+        self.low = 0.
+        self.high = 1.
         self.reset()
 
     def reset(self):
@@ -44,21 +43,6 @@ class OUNoise(object):
         ou_state = self.evolve_state()
         self.sigma = self.max_sigma - (self.max_sigma - self.min_sigma) * min(1.0, t / self.decay_period)
         return np.clip(action + ou_state, self.low, self.high)
-
-
-# https://github.com/openai/gym/blob/master/gym/core.py
-class NormalizedEnv(gym.ActionWrapper):
-    """ Wrap action """
-
-    def action(self, action):
-        act_k = (self.action_space.high - self.action_space.low) / 2.
-        act_b = (self.action_space.high + self.action_space.low) / 2.
-        return act_k * action + act_b
-
-    def reverse_action(self, action):
-        act_k_inv = 2. / (self.action_space.high - self.action_space.low)
-        act_b = (self.action_space.high + self.action_space.low) / 2.
-        return act_k_inv * (action - act_b)
 
 
 def norm_action(self, action):  # self = env
@@ -78,8 +62,8 @@ class Memory:
         self.max_size = max_size
         self.buffer = deque(maxlen=max_size)
 
-    def push(self, state, action, reward, next_state, done):
-        experience = (state, action, np.array([reward]), next_state, done)
+    def push(self, state, action, reward, next_state):
+        experience = (state, action, np.array([reward]), next_state)
         self.buffer.append(experience)
 
     def sample(self, batch_size):
@@ -87,19 +71,17 @@ class Memory:
         action_batch = []
         reward_batch = []
         next_state_batch = []
-        done_batch = []
 
         batch = random.sample(self.buffer, batch_size)
 
         for experience in batch:
-            state, action, reward, next_state, done = experience
+            state, action, reward, next_state = experience
             state_batch.append(state)
             action_batch.append(action)
             reward_batch.append(reward)
             next_state_batch.append(next_state)
-            done_batch.append(done)
 
-        return state_batch, action_batch, reward_batch, next_state_batch, done_batch
+        return state_batch, action_batch, reward_batch, next_state_batch
 
     def __len__(self):
         return len(self.buffer)
@@ -108,7 +90,21 @@ class Memory:
 class Critic(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super(Critic, self).__init__()
-        self.linear1 = nn.Linear(input_size, hidden_size)
+        self.layer1 = nn.Sequential(
+            nn.Conv2d(8, 16, kernel_size=3, padding=1, stride=2),
+            nn.ReLU(),
+        )
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(16, 32, kernel_size=3, padding=1, stride=2),
+            nn.ReLU(),
+        )
+        self.layer3 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, stride=2),
+            nn.ReLU(),
+
+            nn.Flatten(1)
+        )
+        self.linear1 = nn.Linear(hidden_size + 2, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, output_size)
 
@@ -116,7 +112,21 @@ class Critic(nn.Module):
         """
         Params state and actions are torch tensors
         """
-        x = torch.cat([state, action], 1)
+        # action = self.flatten(action)
+        # print("AAA")
+        # print(state.size())
+        state = torch.permute(state, (0, 3, 1, 2))
+        # print(state.size())
+        x = self.layer1(state)
+        # print(x.size())
+        x = self.layer2(x)
+        # print(x.size())
+        x = self.layer3(x)
+        # print(x.size())
+
+        # print(action.size())
+        x = torch.cat([x, action], 1)
+        # print(x.size())
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
         x = self.linear3(x)
@@ -127,44 +137,46 @@ class Critic(nn.Module):
 class Actor(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, learning_rate=3e-4):
         super(Actor, self).__init__()
-        # TODO : Нормально сворачивать - какие параметры и куда ставить
         self.layer1 = nn.Sequential(
-            nn.Conv3d(1, 16, (2, 2, 2)),
-            nn.MaxPool2d(kernel_size=(2, 2)),
+            nn.Conv2d(8, 16, kernel_size=3, padding=1, stride=2),
             nn.ReLU(),
-        # )
-        # self.layer2 = nn.Sequential(
-        #     nn.Conv3d(16, 32, (3, 3, 3)),
-        #     nn.MaxPool2d(kernel_size=(2, 2)),
-        #     nn.ReLU(),
-        # )
-        # self.layer3 = nn.Sequential(
-        #     nn.Conv3d(32, 64, (4, 4, 4)),
-        #     nn.MaxPool2d(kernel_size=(2, 2)),
-        #     nn.ReLU(),
-
-            # TODO : подобрать параметры для Flatten
-            nn.Flatten(0),
-            nn.Sigmoid()
         )
-        # TODO : Каковы параметры слоев
-        self.linear1 = nn.Linear(1728, hidden_size)
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(16, 32, kernel_size=3, padding=1, stride=2),
+            nn.ReLU(),
+        )
+        self.layer3 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, stride=2),
+            nn.ReLU(),
+
+            nn.Flatten(1)
+        )
+
+        self.linear1 = nn.Linear(3200, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, output_size)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, state):
         """
         Param state is a torch tensor
         """
+        # print("BBB")
+        state = torch.permute(state, (0, 3, 1, 2))
         x = self.layer1(state)
-        print(x.size())
-        # x = self.layer2(x)
         # print(x.size())
-        # x = self.layer3(x)
+        x = self.layer2(x)
+        # print(x.size())
+        x = self.layer3(x)
+        # print(x.size())
 
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
-        x = torch.tanh(self.linear3(x))
+        x = F.relu(self.linear3(x))
+        # print("XXX", x, x.size())
+        # x = self.sigmoid(x)
+        x = F.sigmoid(x)
+        # print(x)
 
         return x
 
@@ -205,13 +217,15 @@ class DDPGagent:
         action = action.detach().numpy()[0]
         return action
 
-    def update(self, batch_size):
-        states, actions, rewards, next_states, _ = self.memory.sample(batch_size)
+    def update(self, BATCH_SIZE):
+        states, actions, rewards, next_states = self.memory.sample(BATCH_SIZE)
         states = torch.FloatTensor(states)
         actions = torch.FloatTensor(actions)
         rewards = torch.FloatTensor(rewards)
         next_states = torch.FloatTensor(next_states)
 
+        # print(states.size())
+        # print(actions.size())
         # Critic loss
         Qvals = self.critic.forward(states, actions)
         next_actions = self.actor_target.forward(next_states)
@@ -247,59 +261,97 @@ class Environment(BlackOilEnv):
 
 
 def get_norm_coord(action):
-    return list(map(lambda x: 0 if x == 0 else round(np.log((1 / (x + 1e-8)) - 1)), action))
+    action[0] *= (W - 1)
+    action[1] *= (H - 1)
+    if not (0 <= action[0] < W or 0 <= action[1] < H):
+        raise ValueError("NaN here")
+    return list(map(round, action))
+
+
+def make_reward_number(reward) -> float:
+    if not isinstance(reward, float | np.float_):
+        return reward[0]
+    return reward
+
+
+H = 40
+W = 80
+WELLS = 8
+DAYS = 30
+MAX_EPISODES = 500
+BATCH_SIZE = 128
 
 
 def main():
-    env = Environment(w=10, h=10, wells=4, days=5)
+    env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
 
     agent = DDPGagent(env)
     noise = OUNoise(env.action_space)
-    batch_size = 128
     rewards = []
     avg_rewards = []
-    print(agent)
+    amount_wells = []
 
-    for episode in range(50):
+    for episode in range(MAX_EPISODES):
         state = env.reset()
         noise.reset()
         episode_reward = 0
-        done = False
+        time_begin = perf_counter()
 
-        for step in range(4):
+        for step in range(WELLS):
+            time_action = perf_counter()
             action = agent.get_action(state)
+            time_actor = perf_counter() - time_action
+            # TODO : рандомный шум или шум Ornstein-Uhlenbeck Process ?
             action = noise.get_action(action, step)
-            # print(action)
+            # action = np.clip(action + np.array([torch.randn(), torch.randn()], dtype=np.float32), 0, 1)
+            # print(action, end=' : ')
             action = get_norm_coord(action)
-            print(action)
             # print(state.shape)
-            new_state, reward, done = env.step(action)
-            agent.memory.push(state, action, reward, new_state, done)
+            time_action = perf_counter()
+            new_state, reward, _ = env.step(action)
+            print(action, ':', perf_counter() - time_action, time_actor, end=' : ')
+            reward = make_reward_number(reward)
+            agent.memory.push(state, action, reward, new_state)
 
-            if len(agent.memory) > batch_size:
-                agent.update(batch_size)
+            time_action = perf_counter()
+            if len(agent.memory) > BATCH_SIZE:
+                agent.update(BATCH_SIZE)
+            print(perf_counter() - time_action)
 
             state = new_state
             episode_reward += reward
 
-            if done:
-                sys.stdout.write(
-                    "episode: {}, reward: {}, average _reward: {} \n".format(episode,
-                                                                             np.round(episode_reward, decimals=2),
-                                                                             np.mean(rewards[-10:])))
-                # env.render()
-                break
-
-        assert done is True
+        # env.render()
+        time_end = perf_counter() - time_begin
 
         rewards.append(episode_reward)
         avg_rewards.append(np.mean(rewards[-10:]))
+        wells_built = 0
+        for x in range(H):
+            for y in range(W):
+                if state[x][y][-1]:
+                    wells_built += 1
+        amount_wells.append(wells_built)
+        sys.stdout.write(
+            "episode: {}, reward: {}, average _reward: {}, wells_number: {}, time: {}\n".format(episode,
+                                                                                                np.round(episode_reward,
+                                                                                                         decimals=2),
+                                                                                                np.mean(rewards[-10:]),
+                                                                                                wells_built,
+                                                                                                time_end))
 
     plt.plot(rewards)
     plt.plot(avg_rewards)
     plt.plot()
     plt.xlabel('Episode')
     plt.ylabel('Reward')
+    plt.show()
+    plt.close()
+
+    plt.plot(amount_wells)
+    plt.plot()
+    plt.xlabel('Episode')
+    plt.ylabel('Wells')
     plt.show()
 
 
