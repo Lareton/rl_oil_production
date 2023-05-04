@@ -1,7 +1,11 @@
+import sys
+import random
+import multiprocessing
+from time import perf_counter
+from collections import deque
+
 import numpy as np
 from gym.spaces import Box
-from collections import deque
-import random
 
 import torch.optim as optim
 import torch
@@ -10,13 +14,11 @@ import torch.nn.functional as F
 import torch.autograd
 from torch.autograd import Variable
 
-from src.envs.envs import BlackOilEnv
-
-import sys
-from time import perf_counter
 import matplotlib.pyplot as plt
 
 import pickle
+
+from src.envs.envs import BlackOilEnv
 from sim_data_generation import StateActionTransition
 
 
@@ -293,11 +295,15 @@ def make_reward_number(reward) -> float:
     return reward
 
 
+env: Environment
+agent: DDPGagent
+
+NUM_PROCESSES = multiprocessing.cpu_count()
 H = 40  # 40
 W = 80  # 80
-WELLS = 8  # 8
-DAYS = 30  # 30
-MAX_EPISODES = 500  # 500
+WELLS = 4  # 8
+DAYS = 3  # 30
+MAX_EPISODES = 2  # 500
 BATCH_SIZE = 128  # 128
 MEMORY_SIZE = 50_000  # 50_000
 NOISE_RANGE = 20  # 20
@@ -319,9 +325,75 @@ DATA = ['saved_results1.pkl', 'saved_results2.pkl', 'saved_results3.pkl', 'saved
 """
 
 
-def main():
-    env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
+def step_over_episode(episode_number, rewards):
+    global env, agent
 
+    state = env.reset()
+    episode_reward = 0
+    time_step, time_update = [], []
+    time_begin = perf_counter()
+
+    for step in range(WELLS):
+        action = agent.get_action(state)
+
+        # TODO : рандомный шум - насколько большой ?
+        action = np.clip(np.tanh(torch.randn(2)) / NOISE_RANGE + torch.tensor(action), 0, 1).tolist()
+        action = get_norm_coord(action)
+
+        time_per_step = perf_counter()
+        new_state, reward, _ = env.step(action)
+        time_per_step = perf_counter() - time_per_step
+
+        reward = make_reward_number(reward)
+        agent.memory.push(state, action, reward, new_state)
+
+        if len(agent.memory) > BATCH_SIZE:
+            time_per_update = perf_counter()
+            agent.update(BATCH_SIZE)
+            time_per_update = perf_counter() - time_per_update
+            time_update.append(time_per_update)
+
+            time_per_update = perf_counter()
+            agent.update(BATCH_SIZE)
+            time_per_update = perf_counter() - time_per_update
+            time_update.append(time_per_update)
+
+            time_per_update = perf_counter()
+            agent.update(BATCH_SIZE)
+            time_per_update = perf_counter() - time_per_update
+            time_update.append(time_per_update)
+
+        print(
+            f"{step + 1}: action: {action}, TIME per step: {time_per_step}, TIME per update: {np.mean(time_update[-3:])}")
+
+        state = new_state
+        episode_reward += reward
+
+        time_step.append(time_per_step)
+
+    time_begin = perf_counter() - time_begin
+
+    wells_built = 0
+    for x in range(H):
+        for y in range(W):
+            if state[x][y][-1]:
+                wells_built += 1
+
+    sys.stdout.write(
+        "episode: {}, reward: {}, average _reward: {}, wells_number: {}, time: {}\n".format(episode_number,
+                                                                                            np.round(episode_reward,
+                                                                                                     decimals=2),
+                                                                                            np.mean(rewards),
+                                                                                            wells_built,
+                                                                                            time_begin))
+
+    return episode_reward, wells_built, time_step, time_update, time_begin
+
+
+def main():
+    global env, agent
+
+    env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
     agent = DDPGagent(env, max_memory_size=MEMORY_SIZE)
 
     rewards = []
@@ -345,60 +417,17 @@ def main():
     print("DATA LOADED")
 
     for episode in range(MAX_EPISODES):
-        state = env.reset()
-        episode_reward = 0
-        time_step, time_update = [], []
-        time_begin = perf_counter()
+        actions = [episode + i / 10 for i in range(1, NUM_PROCESSES + 1)]
 
-        for step in range(WELLS):
-            action = agent.get_action(state)
-
-            # TODO : рандомный шум - насколько большой ?
-            action = np.clip(np.tanh(torch.randn(2)) / NOISE_RANGE + torch.tensor(action), 0, 1).tolist()
-            action = get_norm_coord(action)
-
-            time_per_step = perf_counter()
-            new_state, reward, _ = env.step(action)
-            time_per_step = perf_counter() - time_per_step
-
-            reward = make_reward_number(reward)
-            agent.memory.push(state, action, reward, new_state)
-
-            time_per_update = perf_counter()
-            if len(agent.memory) > BATCH_SIZE:
-                agent.update(BATCH_SIZE)
-            time_per_update = perf_counter() - time_per_update
-
-            print(f"{step + 1}: action: {action}, TIME per step: {time_per_step}, TIME per update: {time_per_update}")
-
-            state = new_state
-            episode_reward += reward
-
-            time_update.append(time_per_update)
-            time_step.append(time_per_step)
-
-        time_begin = perf_counter() - time_begin
-        # env.render()
+        with multiprocessing.Pool(NUM_PROCESSES) as pool:
+            episode_reward, wells_built, time_step, time_update, time_begin = pool.map(step_over_episode, actions)
 
         rewards.append(episode_reward)
         avg_rewards.append(np.mean(rewards[-10:]))
-        wells_built = 0
-        for x in range(H):
-            for y in range(W):
-                if state[x][y][-1]:
-                    wells_built += 1
         number_wells[wells_built] += 1
         step_time.append(np.mean(time_step))
         update_time.append(np.mean(time_update))
         episode_time.append(time_begin)
-
-        sys.stdout.write(
-            "episode: {}, reward: {}, average _reward: {}, wells_number: {}, time: {}\n".format(episode,
-                                                                                                np.round(episode_reward,
-                                                                                                         decimals=2),
-                                                                                                np.mean(rewards[-10:]),
-                                                                                                wells_built,
-                                                                                                time_begin))
 
     plt.plot(rewards)
     plt.plot(avg_rewards)
