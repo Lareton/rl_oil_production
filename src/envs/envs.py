@@ -81,8 +81,8 @@ class DummyBlackOilEnv(BaseBlackOilEnv):
 
 
 class BlackOilEnv(BaseBlackOilEnv):
-    def __init__(self):
-        super().__init__(80, 40, 8, 30, 0.9, 0.8, 0.0523, 0.1127, 0.271)
+    def __init__(self, w=80, h=40, wells=8, days=30):
+        super().__init__(w, h, wells, days, 0.9, 0.8, 0.0523, 0.1127, 0.271)
 
     def _generate_map(self, w, h):
         return generate_graph(w, h, 8, 20, 1, 3, 0.8, 2.5, 0.5, 2.5, 0.15, 1.5)
