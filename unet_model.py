@@ -19,15 +19,16 @@ class conv2DBatchNormRelu(nn.Module):
 
 
 class UNet2(nn.Module):
-    def __init__(self, conv_layers_chanels=[8, 64, 128, 256, 512],
-                 deconv_layers_channels=[512, 256, 128, 64, 1],
+    def __init__(self, conv_layers_chanels=[8, 64, 128,],
+                 deconv_layers_channels=[128, 64, 1],
+                 bottle_neck_channels=128,
                  output_channel=1):
         super().__init__()
 
-        self.conv_down_layers = []
-        self.dec_conv_layers = []
-        self.pool_layers = []
-        self.upsample_layers = []
+        self.conv_down_layers = nn.ModuleList([])
+        self.dec_conv_layers = nn.ModuleList([])
+        self.pool_layers = nn.ModuleList([])
+        self.upsample_layers = nn.ModuleList([])
 
         for i in range(len(conv_layers_chanels) - 1):
             inp, out = conv_layers_chanels[i], conv_layers_chanels[i + 1]
@@ -43,7 +44,7 @@ class UNet2(nn.Module):
 
         # bottleneck
         self.bottle_neck = nn.Sequential(
-            conv2DBatchNormRelu(512, 512, 1, 1, 0),
+            conv2DBatchNormRelu(bottle_neck_channels, bottle_neck_channels, 1, 1, 0),
         )
 
         for i in range(len(deconv_layers_channels) - 1):
@@ -94,18 +95,10 @@ class UNet2(nn.Module):
         res = self.last_block(results_deconv[-1])
         return res
 
-    def get_all_weights(self):
-        return [*self.conv_down_layers, *self.dec_conv_layers,
-                       *self.pool_layers, *self.upsample_layers]
 
     def to_cuda(self):
         self.cuda()
 
-        for tensor in self.get_all_weights():
-            tensor = tensor.to("cuda")
 
     def to_cpu(self):
         self.cpu()
-
-        for tensor in self.get_all_weights():
-            tensor = tensor.to("cpu")
