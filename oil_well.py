@@ -92,8 +92,6 @@ if __name__ == "__main__":
     render(pre_state[:, :, 4], state,  best_generation[0], env)
 
 
-''' pre_state = env.reset()
-      for action in best_generation[0]:
-        state, reward, done = env.step(action)
-        print(reward)
-    env.render(settings)'''
+
+
+
