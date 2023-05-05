@@ -376,12 +376,11 @@ W = 80  # 80
 WELLS = 8  # 8
 DAYS = 30  # 30
 LAYER_SIZE = 3200  # 3200 | 384
-MAX_EPISODES = 7  # 500
+MAX_EPISODES = 500  # 500
 BATCH_SIZE = 128  # 128
 MEMORY_SIZE = 50_000  # 50_000
 TARGET_UPDATE_TIME = 10
 NOISE_RANGE = 5  # 20
-TRIES_TO_BUILT_WELL = 50
 DATA = ['saved_results1.pkl', 'saved_results2.pkl', 'saved_results3.pkl', 'saved_results5.pkl']
 
 # TODO : логировать всевозможные параметры, чтобы было легче дебажить
@@ -483,66 +482,72 @@ def step_over_episode(args):
 
 
 def main():
-    env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
-    agent = DDPGagent(env, max_memory_size=MEMORY_SIZE)
+    try:
+        env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
+        agent = DDPGagent(env, max_memory_size=MEMORY_SIZE)
 
-    steps = 0
-    rewards = []
-    avg_rewards = []
-    number_wells = {i + 1: 0 for i in range(WELLS)}
-    step_time = []
-    update_time = []
-    episode_time = []
+        steps = 0
+        rewards = []
+        avg_rewards = []
+        number_wells = {i + 1: 0 for i in range(WELLS)}
+        step_time = []
+        update_time = []
+        episode_time = []
 
-    # Считаем максимальную и среднюю нагруду по рандомным данным - равна 2.7 : 0.5
-    tt = get_experience_data(DATA[0]) + get_experience_data(DATA[1]) + get_experience_data(DATA[2]) + get_experience_data(DATA[3])
-    max_r = np.mean([x[2] for x in tt])
-    print(max_r)
+        # Считаем максимальную и среднюю нагруду по рандомным данным - равна 2.7 : 0.5
+        tt = get_experience_data(DATA[0]) + get_experience_data(DATA[1]) + get_experience_data(DATA[2]) + get_experience_data(DATA[3])
+        max_r = np.mean([x[2] for x in tt])
+        print(max_r)
 
-    # Считаем максимальную и среднюю стоимость вышки по рандомным данным - равна 2.45 : 4.06
-    max_b = np.mean([c[6] for x in tt for y in x[0] for c in y])
-    print(max_b)
+        # Считаем максимальную и среднюю стоимость вышки по рандомным данным - равна 2.45 : 4.06
+        max_b = np.mean([c[6] for x in tt for y in x[0] for c in y])
+        print(max_b)
 
-    if H == 40 and W == 80 and WELLS == 8:
-        # Загружаем данные в память
-        for file_name in DATA:
-            temp = get_experience_data(file_name)
-            for sample in temp:
-                agent.memory.push(*sample)
-        print("DATA LOADED")
+        if H == 40 and W == 80 and WELLS == 8:
+            # Загружаем данные в память
+            for file_name in DATA:
+                temp = get_experience_data(file_name)
+                for sample in temp:
+                    agent.memory.push(*sample)
+            print("DATA LOADED")
 
-    for episode in range(MAX_EPISODES):
-        actions = [(agent, episode + i / 10, rewards[-10:], steps) for i in range(1, NUM_PROCESSES + 1)]
+        for episode in range(MAX_EPISODES):
+            actions = [(agent, episode + i / 10, rewards[-10:], steps) for i in range(1, NUM_PROCESSES + 1)]
 
-        # with multiprocessing.Pool(NUM_PROCESSES) as pool:
-        #     episode_reward, wells_built, time_step, time_update, time_begin = pool.map(step_over_episode, actions)
-        # try:
-        episode_reward, wells_built, time_step, time_update, time_begin = step_over_episode(actions[0])
-        # except Exception as exc:
-        #     print(exc)
+            # with multiprocessing.Pool(NUM_PROCESSES) as pool:
+            #     episode_reward, wells_built, time_step, time_update, time_begin = pool.map(step_over_episode, actions)
+            # try:
+            episode_reward, wells_built, time_step, time_update, time_begin = step_over_episode(actions[0])
+            # except Exception as exc:
+            #     print(exc)
 
-        # if len(agent.memory) > BATCH_SIZE:
-        #     time_per_update = perf_counter()
-        #     agent.update(BATCH_SIZE)
-        #     time_per_update = perf_counter() - time_per_update
-        #     time_update.append(time_per_update)
-        #
-        #     time_per_update = perf_counter()
-        #     agent.update(BATCH_SIZE)
-        #     time_per_update = perf_counter() - time_per_update
-        #     time_update.append(time_per_update)
-        #
-        #     time_per_update = perf_counter()
-        #     agent.update(BATCH_SIZE)
-        #     time_per_update = perf_counter() - time_per_update
-        #     time_update.append(time_per_update)
+            # if len(agent.memory) > BATCH_SIZE:
+            #     time_per_update = perf_counter()
+            #     agent.update(BATCH_SIZE)
+            #     time_per_update = perf_counter() - time_per_update
+            #     time_update.append(time_per_update)
+            #
+            #     time_per_update = perf_counter()
+            #     agent.update(BATCH_SIZE)
+            #     time_per_update = perf_counter() - time_per_update
+            #     time_update.append(time_per_update)
+            #
+            #     time_per_update = perf_counter()
+            #     agent.update(BATCH_SIZE)
+            #     time_per_update = perf_counter() - time_per_update
+            #     time_update.append(time_per_update)
 
-        rewards.append(episode_reward)
-        avg_rewards.append(np.mean(rewards[-10:]))
-        number_wells[wells_built] += 1
-        step_time.append(np.mean(time_step))
-        update_time.append(np.mean(time_update))
-        episode_time.append(time_begin)
+            rewards.append(episode_reward)
+            avg_rewards.append(np.mean(rewards[-10:]))
+            number_wells[wells_built] += 1
+            step_time.append(np.mean(time_step))
+            update_time.append(np.mean(time_update))
+            episode_time.append(time_begin)
+    except KeyboardInterrupt as exc:
+        print(exc)
+    except Exception as exc:
+        print("some bad happened")
+        print(exc)
 
     plt.plot(rewards)
     plt.plot(avg_rewards)
