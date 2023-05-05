@@ -35,6 +35,7 @@ class BaseBlackOilEnv:
         Begins a new episode of a simulation.
         :return: First observation
         """
+        self.steps = 0
         self.field_map = FieldMap(self._generate_map(self.w, self.h))
         self.well_map = WellMap(self.w, self.h, 2)
         self.flow_map = FlowMap(self.field_map, self.well_map, 0.6 / 5, self.well_power, self.wpr)
