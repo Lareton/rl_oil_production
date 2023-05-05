@@ -482,10 +482,9 @@ def step_over_episode(args):
 
 
 def main():
+    env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
+    agent = DDPGagent(env, max_memory_size=MEMORY_SIZE)
     try:
-        env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
-        agent = DDPGagent(env, max_memory_size=MEMORY_SIZE)
-
         steps = 0
         rewards = []
         avg_rewards = []
@@ -549,11 +548,15 @@ def main():
         print("some bad happened")
         print(exc)
 
-    plt.plot(rewards)
-    plt.plot(avg_rewards)
+    with open('ddpg_model.pkl', 'wb') as f:
+        pickle.dump(agent, f)
+
+    plt.plot(rewards, label='reward per step')
+    plt.plot(avg_rewards, label='average reward')
     plt.plot()
     plt.xlabel('Episode')
     plt.ylabel('Reward')
+    plt.legend()
     plt.grid()
     plt.show()
     plt.close()
