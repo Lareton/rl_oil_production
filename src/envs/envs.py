@@ -40,6 +40,8 @@ class BaseBlackOilEnv:
         self.well_map = WellMap(self.w, self.h, 2)
         self.flow_map = FlowMap(self.field_map, self.well_map, 0.6 / 5, self.well_power, self.wpr)
         self.observation = self._build_observation()
+        self.steps = 0
+
         return self.observation
 
     def step(self, action):

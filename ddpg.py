@@ -22,6 +22,11 @@ from src.envs.envs import BlackOilEnv
 from sim_data_generation import StateActionTransition
 
 
+def manh_dist(x, y, x1, y1):
+    return np.sqrt((x - x1) ** 2 + (y - y1) ** 2)
+    # return abs(x - x1) + abs(y - y1)
+
+
 # def get_done(state):
 #     wells = 0
 #     for i in state:
@@ -344,6 +349,22 @@ def make_reward_number(reward) -> float:
     return reward
 
 
+def help_action(wells, action):
+    if check_well(wells, *action):
+        return action
+    min_dist = 10000
+    pos = []
+    for x in range(W):
+        for y in range(H):
+            if check_well(wells, x, y):
+                if manh_dist(x, y, *action) < min_dist:
+                    min_dist = manh_dist(x, y, *action)
+                    pos = [(x, y)]
+                elif manh_dist(x, y, *action) == min_dist:
+                    pos.append((x, y))
+    return random.choice(pos)
+
+
 q_val = []
 loss_val = []
 
@@ -354,8 +375,8 @@ H = 40  # 40
 W = 80  # 80
 WELLS = 8  # 8
 DAYS = 30  # 30
-LAYER_SIZE = 3200  # 3200
-MAX_EPISODES = 37  # 500
+LAYER_SIZE = 3200  # 3200 | 384
+MAX_EPISODES = 7  # 500
 BATCH_SIZE = 128  # 128
 MEMORY_SIZE = 50_000  # 50_000
 TARGET_UPDATE_TIME = 10
@@ -394,7 +415,6 @@ def step_over_episode(args):
     time_step, time_update = [], []
     time_begin = perf_counter()
     wells = []
-    beta = 1
 
     for step in range(WELLS):
 
@@ -405,20 +425,8 @@ def step_over_episode(args):
         # action = noise.get_action(action).tolist()
 
         action = get_norm_coord(action)
-        # print(f"Trying to build well at: {action}", end=' - ')
-        while not check_well(wells, *action) and beta > 0:
-            action = agent.get_action(state)
-            # print("can't build")
+        action = help_action(wells, action)
 
-            action = np.clip(np.tanh(torch.randn(2)) / NOISE_RANGE + torch.tensor(action), 0, 1).tolist()
-            # action = noise.get_action(action).tolist()
-
-            action = get_norm_coord(action)
-            beta -= 1 / TRIES_TO_BUILT_WELL
-            # time.sleep(0.3)
-            # print(f"Trying to build well at: {action}", end=' - ')
-
-        # print('position is ok' if check_well(wells, *action) else "can't build")
         time_per_step = perf_counter()
         new_state, reward, done = env.step(action)
         time_per_step = perf_counter() - time_per_step
@@ -495,12 +503,13 @@ def main():
     max_b = np.mean([c[6] for x in tt for y in x[0] for c in y])
     print(max_b)
 
-    # Загружаем данные в память
-    # for file_name in DATA:
-    #     temp = get_experience_data(file_name)
-    #     for sample in temp:
-    #         agent.memory.push(*sample)
-    # print("DATA LOADED")
+    if H == 40 and W == 80 and WELLS == 8:
+        # Загружаем данные в память
+        for file_name in DATA:
+            temp = get_experience_data(file_name)
+            for sample in temp:
+                agent.memory.push(*sample)
+        print("DATA LOADED")
 
     for episode in range(MAX_EPISODES):
         actions = [(agent, episode + i / 10, rewards[-10:], steps) for i in range(1, NUM_PROCESSES + 1)]
@@ -540,6 +549,7 @@ def main():
     plt.plot()
     plt.xlabel('Episode')
     plt.ylabel('Reward')
+    plt.grid()
     plt.show()
     plt.close()
 
@@ -548,6 +558,7 @@ def main():
     plt.plot()
     plt.xlabel('Wells')
     plt.ylabel('Episode')
+    plt.grid()
     plt.show()
     plt.close()
 
@@ -558,6 +569,7 @@ def main():
     plt.xlabel('Episode')
     plt.ylabel('Time')
     plt.legend()
+    plt.grid()
     plt.show()
     plt.close()
 
@@ -568,6 +580,7 @@ def main():
     plt.xlabel('Episode')
     plt.ylabel('Value')
     plt.legend()
+    plt.grid()
     plt.show()
     plt.close()
 
@@ -576,6 +589,7 @@ def main():
     plt.xlabel('Episode')
     plt.ylabel('Value')
     plt.legend()
+    plt.grid()
     plt.show()
     plt.close()
 
