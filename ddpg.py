@@ -1,6 +1,7 @@
 import sys
 import random
 import multiprocessing
+import time
 from time import perf_counter
 from collections import deque
 
@@ -12,7 +13,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.autograd
-from torch.autograd import Variable
 
 import matplotlib.pyplot as plt
 
@@ -20,6 +20,14 @@ import pickle
 
 from src.envs.envs import BlackOilEnv
 from sim_data_generation import StateActionTransition
+
+
+# def get_done(state):
+#     wells = 0
+#     for i in state:
+#         for j in i:
+#             wells += j[-1]
+#     return wells == 8
 
 
 def get_experience_data(file_name: str):
@@ -30,7 +38,7 @@ def get_experience_data(file_name: str):
     for i in data:
         for j in i:
             j: StateActionTransition
-            data_flatted.append((j.state, j.action, make_reward_number(j.reward), j.new_state))
+            data_flatted.append((j.state, j.action, make_reward_number(j.reward), j.new_state, False))
 
     return data_flatted
 
@@ -80,8 +88,8 @@ class Memory:
         self.max_size = max_size
         self.buffer = deque(maxlen=max_size)
 
-    def push(self, state, action, reward, next_state):
-        experience = (state, action, np.array([reward]), next_state)
+    def push(self, state, action, reward, next_state, done):
+        experience = (state, action, np.array([reward]), next_state, done)
         self.buffer.append(experience)
 
     def sample(self, batch_size):
@@ -89,17 +97,19 @@ class Memory:
         action_batch = []
         reward_batch = []
         next_state_batch = []
+        done_batch = []
 
         batch = random.sample(self.buffer, batch_size)
 
         for experience in batch:
-            state, action, reward, next_state = experience
+            state, action, reward, next_state, done = experience
             state_batch.append(state)
             action_batch.append(action)
             reward_batch.append(reward)
             next_state_batch.append(next_state)
+            done_batch.append(done)
 
-        return state_batch, action_batch, reward_batch, next_state_batch
+        return state_batch, action_batch, reward_batch, next_state_batch, done_batch
 
     def __len__(self):
         return len(self.buffer)
@@ -122,9 +132,9 @@ class Critic(nn.Module):
 
             nn.Flatten(1)
         )
-        self.linear1 = nn.Linear(3202, hidden_size)
+        self.linear1 = nn.Linear(LAYER_SIZE + 2, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
-        self.linear3 = nn.Linear(hidden_size, output_size)
+        self.linear3 = nn.Linear(hidden_size, 1)
 
     def forward(self, state, action):
         """
@@ -170,36 +180,48 @@ class Actor(nn.Module):
             nn.Flatten(1)
         )
 
-        self.linear1 = nn.Linear(3200, hidden_size)
+        self.linear1 = nn.Linear(LAYER_SIZE, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
         self.linear3 = nn.Linear(hidden_size, output_size)
-        self.sigmoid = nn.Sigmoid()
 
     def forward(self, state):
         """
         Param state is a torch tensor
         """
         # print("BBB")
-        state = torch.permute(state, (0, 3, 1, 2))
-        x = self.layer1(state)
-        # print(x.size())def make_reward_number(reward) -> float:
-        #     if not isinstance(reward, float | np.float_):
-        #         return reward[0]
-        #     return reward
-        x = self.layer2(x)
-        # print(x.size())
-        x = self.layer3(x)
-        # print(x.size())
+        try:
+            state = torch.permute(state, (0, 3, 1, 2))
+            # print('q')
+            x = self.layer1(state)
+            # print('a')
+            # print(x.size())def make_reward_number(reward) -> float:
+            #     if not isinstance(reward, float | np.float_):
+            #         return reward[0]
+            #     return reward
+            x = self.layer2(x)
+            # print('b')
+            # print(x.size())
+            x = self.layer3(x)
+            # print('c')
+            # print(x.size())
 
-        x = F.relu(self.linear1(x))
-        x = F.relu(self.linear2(x))
-        x = F.relu(self.linear3(x))
-        # print("XXX", x, x.size())
-        # x = self.sigmoid(x)
-        x = F.sigmoid(x)
-        # print(x)
+            x = F.relu(self.linear1(x))
+            # print('d')
+            x = F.relu(self.linear2(x))
+            # print('e')
+            x = F.relu(self.linear3(x))
+            # print('f')
+            # print("XXX", x, x.size())
+            # x = self.sigmoid(x)
+            x = F.sigmoid(x)
+            # print('f')
+            # print(x)
 
-        return x
+            return x
+        except Exception as exc:
+            print(exc)
+
+        return 0, 0
 
 
 class DDPGagent:
@@ -217,6 +239,10 @@ class DDPGagent:
         self.actor_target = Actor(self.num_states, hidden_size, self.num_actions)
         self.critic = Critic(self.num_states + self.num_actions, hidden_size, self.num_actions)
         self.critic_target = Critic(self.num_states + self.num_actions, hidden_size, self.num_actions)
+        self.actor.share_memory()
+        self.critic.share_memory()
+        self.critic_target.share_memory()
+        self.actor_target.share_memory()
 
         for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
             target_param.data.copy_(param.data)
@@ -231,47 +257,61 @@ class DDPGagent:
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=critic_learning_rate)
 
     def get_action(self, state):
-        state = Variable(torch.from_numpy(state).float().unsqueeze(0))
-        # print(state)
-        action = self.actor.forward(state)
-        # action = np.array(action[0], action[1])
-        action = action.detach().numpy()[0]
+        # print(1)
+        with torch.no_grad():
+            # print(2)
+            state = torch.from_numpy(state).float().unsqueeze(0)
+            # print(3)
+            # print(state)
+            action = self.actor.forward(state)
+            # print(4)
+            # action = np.array(action[0], action[1])
+            action = action.detach().numpy()[0]
         return action
 
-    def update(self, BATCH_SIZE):
-        states, actions, rewards, next_states = self.memory.sample(BATCH_SIZE)
+    def update(self, target_update):
+        states, actions, rewards, next_states, done = self.memory.sample(BATCH_SIZE)
         states = torch.FloatTensor(states)
         actions = torch.FloatTensor(actions)
         rewards = torch.FloatTensor(rewards)
         next_states = torch.FloatTensor(next_states)
+        done = torch.FloatTensor(done)
 
         # print(states.size())
         # print(actions.size())
         # Critic loss
         Qvals = self.critic.forward(states, actions)
-        next_actions = self.actor_target.forward(next_states)
-        next_Q = self.critic_target.forward(next_states, next_actions.detach())
-        Qprime = rewards + self.gamma * next_Q
+        with torch.no_grad():
+            next_actions = self.actor_target.forward(next_states)
+            next_Q = self.critic_target.forward(next_states, next_actions)
+            Qprime = rewards + self.gamma * next_Q * (1 - done)
         critic_loss = self.critic_criterion(Qvals, Qprime)
-
-        # Actor loss
-        policy_loss = -self.critic.forward(states, self.actor.forward(states)).mean()
-
-        # update networks
-        self.actor_optimizer.zero_grad()
-        policy_loss.backward()
-        self.actor_optimizer.step()
 
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
 
-        # update target networks
-        for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
-            target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
+        # print(Qvals)
+        # print(Qvals.size())
+        print(f"Qvals {Qvals.mean()}, next_Q {next_Q.mean()}, Qprime {Qprime.mean()}, rewards {rewards.mean()}, critic_loss {critic_loss}")
+        q_val.append((Qvals.mean(), next_Q.mean(), Qprime.mean()))
+        loss_val.append(critic_loss)
 
-        for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
-            target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
+        # Actor loss
+        policy_loss = -self.critic.forward(states, self.actor.forward(states)).mean()
+
+        self.actor_optimizer.zero_grad()
+        policy_loss.backward()
+        self.actor_optimizer.step()
+
+        # update target networks
+        if target_update:
+
+            for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
+                target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
+
+            for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
+                target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
 
 
 class Environment(BlackOilEnv):
@@ -279,6 +319,15 @@ class Environment(BlackOilEnv):
         super().__init__(w=w, h=h, wells=wells, days=days)
         self.action_space = Box(low=np.array([0.0, 0.0]), high=np.array([self.w, self.h]), dtype=np.float32)
         self.observation_space = Box(low=0.0, high=0.0, shape=(self.h, self.w, 8), dtype=np.float32)
+
+
+def check_well(wells, x, y, intersection_radius=2):
+    if 0 <= x < W and 0 <= y < H:
+        for w in wells:
+            if abs(w[0] - x) < intersection_radius or abs(w[1] - y) < intersection_radius:
+                return False
+        return True
+    return False
 
 
 def get_norm_coord(action) -> tuple:
@@ -295,20 +344,26 @@ def make_reward_number(reward) -> float:
     return reward
 
 
-env: Environment
-agent: DDPGagent
+q_val = []
+loss_val = []
 
-NUM_PROCESSES = multiprocessing.cpu_count()
+
+# NUM_PROCESSES = multiprocessing.cpu_count()
+NUM_PROCESSES = 1
 H = 40  # 40
 W = 80  # 80
-WELLS = 4  # 8
-DAYS = 3  # 30
-MAX_EPISODES = 2  # 500
+WELLS = 8  # 8
+DAYS = 30  # 30
+LAYER_SIZE = 3200  # 3200
+MAX_EPISODES = 37  # 500
 BATCH_SIZE = 128  # 128
 MEMORY_SIZE = 50_000  # 50_000
-NOISE_RANGE = 20  # 20
+TARGET_UPDATE_TIME = 10
+NOISE_RANGE = 5  # 20
+TRIES_TO_BUILT_WELL = 50
 DATA = ['saved_results1.pkl', 'saved_results2.pkl', 'saved_results3.pkl', 'saved_results5.pkl']
 
+# TODO : логировать всевозможные параметры, чтобы было легче дебажить
 
 """
     Как запускать тестирование:
@@ -325,47 +380,76 @@ DATA = ['saved_results1.pkl', 'saved_results2.pkl', 'saved_results3.pkl', 'saved
 """
 
 
-def step_over_episode(episode_number, rewards):
-    global env, agent
+# def step_over_episode(episode_number, rewards):
+def step_over_episode(args):
+    agent, episode_number, rewards, steps = args
+    # print(episode_number, rewards)
+
+    env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
+    # noise = OUNoise(env.action_space)
+    # noise.reset()
 
     state = env.reset()
     episode_reward = 0
     time_step, time_update = [], []
     time_begin = perf_counter()
+    wells = []
+    beta = 1
 
     for step in range(WELLS):
+
         action = agent.get_action(state)
 
         # TODO : рандомный шум - насколько большой ?
         action = np.clip(np.tanh(torch.randn(2)) / NOISE_RANGE + torch.tensor(action), 0, 1).tolist()
-        action = get_norm_coord(action)
+        # action = noise.get_action(action).tolist()
 
+        action = get_norm_coord(action)
+        # print(f"Trying to build well at: {action}", end=' - ')
+        while not check_well(wells, *action) and beta > 0:
+            action = agent.get_action(state)
+            # print("can't build")
+
+            action = np.clip(np.tanh(torch.randn(2)) / NOISE_RANGE + torch.tensor(action), 0, 1).tolist()
+            # action = noise.get_action(action).tolist()
+
+            action = get_norm_coord(action)
+            beta -= 1 / TRIES_TO_BUILT_WELL
+            # time.sleep(0.3)
+            # print(f"Trying to build well at: {action}", end=' - ')
+
+        # print('position is ok' if check_well(wells, *action) else "can't build")
         time_per_step = perf_counter()
-        new_state, reward, _ = env.step(action)
+        new_state, reward, done = env.step(action)
         time_per_step = perf_counter() - time_per_step
 
+        wells.append(action)
+
         reward = make_reward_number(reward)
-        agent.memory.push(state, action, reward, new_state)
+        # agent.memory.push(state, action, reward * beta, new_state, done)
+        agent.memory.push(state, action, reward, new_state, done)
 
         if len(agent.memory) > BATCH_SIZE:
+            # print(episode_number, step)
             time_per_update = perf_counter()
-            agent.update(BATCH_SIZE)
+            agent.update(steps % TARGET_UPDATE_TIME == 0)
             time_per_update = perf_counter() - time_per_update
             time_update.append(time_per_update)
 
             time_per_update = perf_counter()
-            agent.update(BATCH_SIZE)
+            agent.update(steps % TARGET_UPDATE_TIME == 0)
             time_per_update = perf_counter() - time_per_update
             time_update.append(time_per_update)
 
             time_per_update = perf_counter()
-            agent.update(BATCH_SIZE)
+            agent.update(steps % TARGET_UPDATE_TIME == 0)
             time_per_update = perf_counter() - time_per_update
             time_update.append(time_per_update)
 
         print(
             f"{step + 1}: action: {action}, TIME per step: {time_per_step}, TIME per update: {np.mean(time_update[-3:])}")
 
+        steps += 1
         state = new_state
         episode_reward += reward
 
@@ -391,11 +475,10 @@ def step_over_episode(episode_number, rewards):
 
 
 def main():
-    global env, agent
-
     env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
     agent = DDPGagent(env, max_memory_size=MEMORY_SIZE)
 
+    steps = 0
     rewards = []
     avg_rewards = []
     number_wells = {i + 1: 0 for i in range(WELLS)}
@@ -403,24 +486,47 @@ def main():
     update_time = []
     episode_time = []
 
-    # Считаем максимальную нагруду по рандомным данным - равна 2.7
-    # tt = get_experience_data(DATA[0])[1]
-    # tt = max(tt, get_experience_data(DATA[1])[1])
-    # tt = max(tt, get_experience_data(DATA[2])[1])
-    # tt = max(tt, get_experience_data(DATA[3])[1])
-    # print(tt)
+    # Считаем максимальную и среднюю нагруду по рандомным данным - равна 2.7 : 0.5
+    tt = get_experience_data(DATA[0]) + get_experience_data(DATA[1]) + get_experience_data(DATA[2]) + get_experience_data(DATA[3])
+    max_r = np.mean([x[2] for x in tt])
+    print(max_r)
 
-    for file_name in DATA:
-        temp = get_experience_data(file_name)
-        for sample in temp:
-            agent.memory.push(*sample)
-    print("DATA LOADED")
+    # Считаем максимальную и среднюю стоимость вышки по рандомным данным - равна 2.45 : 4.06
+    max_b = np.mean([c[6] for x in tt for y in x[0] for c in y])
+    print(max_b)
+
+    # Загружаем данные в память
+    # for file_name in DATA:
+    #     temp = get_experience_data(file_name)
+    #     for sample in temp:
+    #         agent.memory.push(*sample)
+    # print("DATA LOADED")
 
     for episode in range(MAX_EPISODES):
-        actions = [episode + i / 10 for i in range(1, NUM_PROCESSES + 1)]
+        actions = [(agent, episode + i / 10, rewards[-10:], steps) for i in range(1, NUM_PROCESSES + 1)]
 
-        with multiprocessing.Pool(NUM_PROCESSES) as pool:
-            episode_reward, wells_built, time_step, time_update, time_begin = pool.map(step_over_episode, actions)
+        # with multiprocessing.Pool(NUM_PROCESSES) as pool:
+        #     episode_reward, wells_built, time_step, time_update, time_begin = pool.map(step_over_episode, actions)
+        # try:
+        episode_reward, wells_built, time_step, time_update, time_begin = step_over_episode(actions[0])
+        # except Exception as exc:
+        #     print(exc)
+
+        # if len(agent.memory) > BATCH_SIZE:
+        #     time_per_update = perf_counter()
+        #     agent.update(BATCH_SIZE)
+        #     time_per_update = perf_counter() - time_per_update
+        #     time_update.append(time_per_update)
+        #
+        #     time_per_update = perf_counter()
+        #     agent.update(BATCH_SIZE)
+        #     time_per_update = perf_counter() - time_per_update
+        #     time_update.append(time_per_update)
+        #
+        #     time_per_update = perf_counter()
+        #     agent.update(BATCH_SIZE)
+        #     time_per_update = perf_counter() - time_per_update
+        #     time_update.append(time_per_update)
 
         rewards.append(episode_reward)
         avg_rewards.append(np.mean(rewards[-10:]))
@@ -451,6 +557,24 @@ def main():
     plt.plot()
     plt.xlabel('Episode')
     plt.ylabel('Time')
+    plt.legend()
+    plt.show()
+    plt.close()
+
+    plt.plot([x[0].detach() for x in q_val], label='Qval')
+    plt.plot([x[1].detach() for x in q_val], label='next_Q')
+    plt.plot([x[2].detach() for x in q_val], label='Qprime')
+    plt.plot()
+    plt.xlabel('Episode')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.show()
+    plt.close()
+
+    plt.plot(list(map(torch.detach, loss_val)), label='critic_loss')
+    plt.plot()
+    plt.xlabel('Episode')
+    plt.ylabel('Value')
     plt.legend()
     plt.show()
     plt.close()
