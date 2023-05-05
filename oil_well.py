@@ -14,7 +14,7 @@ def individual(state):
             action = (random.randint(0, state.shape[1] - 1), random.randint(0, state.shape[0] - 1))
             x, y = action
 
-            while state[y][x][4] < 0.05: # Checking the oil_amount
+            while state[y][x][4] < 1e-6: # Checking the oil_amount
                 action = (random.randint(0, state.shape[1] - 1), random.randint(0, state.shape[0] - 1))
                 x, y = action
             chrom.append(action)
@@ -60,7 +60,7 @@ def mutation(popul, state):
         action = (random.randint(0, state.shape[1] - 1), random.randint(0, state.shape[0] - 1))
         x, y = action
 
-        while state[y][x][4] < 0.05:
+        while state[y][x][4] < 1e-6:
             action = (random.randint(0, state.shape[1] - 1), random.randint(0, state.shape[0] - 1))
             x, y = action
         
@@ -92,8 +92,6 @@ if __name__ == "__main__":
     render(pre_state[:, :, 4], state,  best_generation[0], env)
 
 
-''' pre_state = env.reset()
-      for action in best_generation[0]:
-        state, reward, done = env.step(action)
-        print(reward)
-    env.render(settings)'''
+
+
+
