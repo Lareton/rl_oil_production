@@ -295,7 +295,6 @@ class DDPGagent:
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
-
         # print(Qvals)
         # print(Qvals.size())
         print(f"Qvals {Qvals.mean()}, next_Q {next_Q.mean()}, Qprime {Qprime.mean()}, rewards {rewards.mean()}, critic_loss {critic_loss}")
@@ -381,6 +380,8 @@ BATCH_SIZE = 128  # 128
 MEMORY_SIZE = 50_000  # 50_000
 TARGET_UPDATE_TIME = 10
 NOISE_RANGE = 5  # 20
+LOAD_MODEL = True
+MODEL_PATH = "ddpg_model.pkl"
 DATA = ['saved_results1.pkl', 'saved_results2.pkl', 'saved_results3.pkl', 'saved_results5.pkl']
 
 # TODO : логировать всевозможные параметры, чтобы было легче дебажить
@@ -483,7 +484,12 @@ def step_over_episode(args):
 
 def main():
     env = Environment(w=W, h=H, wells=WELLS, days=DAYS)
+
     agent = DDPGagent(env, max_memory_size=MEMORY_SIZE)
+    if LOAD_MODEL:
+        with open(MODEL_PATH, 'rb') as file:
+            agent = pickle.load(file)
+
     try:
         steps = 0
         rewards = []
@@ -502,13 +508,15 @@ def main():
         max_b = np.mean([c[6] for x in tt for y in x[0] for c in y])
         print(max_b)
 
-        if H == 40 and W == 80 and WELLS == 8:
+        if H == 40 and W == 80 and WELLS == 8 and not LOAD_MODEL:
             # Загружаем данные в память
             for file_name in DATA:
                 temp = get_experience_data(file_name)
                 for sample in temp:
                     agent.memory.push(*sample)
             print("DATA LOADED")
+
+        last_episode_number = 0
 
         for episode in range(MAX_EPISODES):
             actions = [(agent, episode + i / 10, rewards[-10:], steps) for i in range(1, NUM_PROCESSES + 1)]
@@ -542,14 +550,24 @@ def main():
             step_time.append(np.mean(time_step))
             update_time.append(np.mean(time_update))
             episode_time.append(time_begin)
+            last_episode_number += 1
+
     except KeyboardInterrupt as exc:
         print(exc)
+
     except Exception as exc:
         print("some bad happened")
         print(exc)
 
     with open('ddpg_model.pkl', 'wb') as f:
         pickle.dump(agent, f)
+
+    print('---' * 5 + 'LEARNING ENDED' + '---' * 5)
+    print(f"{last_episode_number} has played")
+    print(f"Average score: {np.mean(rewards)}")
+    print(f"Average time per episode: {np.mean(episode_time)}")
+    print(f"Average time per step: {np.mean(step_time)}")
+    print(f"Average time per update: {np.mean(update_time)}")
 
     plt.plot(rewards, label='reward per step')
     plt.plot(avg_rewards, label='average reward')
